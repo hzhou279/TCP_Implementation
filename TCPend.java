@@ -1,3 +1,6 @@
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+
 public class TCPend {
   // protected int port;
   // protected int remoteIP;
@@ -9,7 +12,7 @@ public class TCPend {
 
   public static void main(String[] args) {
     int port;
-    int remoteIP;
+    InetAddress remoteIP = null;
     int remotePort;
     String fileName;
     byte mtu; // maximum transmission unit in bytes
@@ -23,7 +26,12 @@ public class TCPend {
 
     // TCP sender
     if (args[2].equals("-s")) {
-      remoteIP = Integer.parseInt(args[3]);
+      try {
+        remoteIP = InetAddress.getByName(args[3]);
+      } catch (UnknownHostException e) {
+        System.out.println("unknown IP address.");
+        e.printStackTrace();
+      }
       remotePort = Integer.parseInt(args[5]);
       fileName = args[7];
       mtu = (byte)Integer.parseInt(args[9]);
@@ -43,6 +51,7 @@ public class TCPend {
       mode = 0;
 
       TCPreceiver receiver = new TCPreceiver(port, fileName, mtu, sws);
+      receiver.printInfo();
     } 
     
   }
