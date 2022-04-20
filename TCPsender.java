@@ -1,3 +1,4 @@
+import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -25,9 +26,17 @@ public class TCPsender {
     try {
       DatagramSocket socket = new DatagramSocket(port);
       TCPsegment initialTCP = new TCPsegment(TCPsegment.SYN, (byte)0);
-      // DatagramPacket initialPacket = new DatagramPacket(buf, length, remoteIP, port);
+      byte[] buf = initialTCP.serialize();
+      DatagramPacket initialPacket = new DatagramPacket(buf, 0, remoteIP, port);
+      socket.send(initialPacket);
+
+      
+      socket.close();
     } catch (SocketException e) {
       System.out.println("Sender socket error.");
+      e.printStackTrace();
+    } catch (IOException e) {
+      System.out.println("An I/O exception occurs.");
       e.printStackTrace();
     }
   }
