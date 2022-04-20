@@ -30,8 +30,12 @@ public class TCPsegment {
   public TCPsegment(byte flag, byte sequenceNum) {
     this.flag = flag;
     this.sequenceNum = sequenceNum;
-    this.data = null;
+    this.acknowledgement = 0;
+    this.timestamp = 0;
+    this.length = 0;
     this.checksum = 0;
+    this.data = null;
+    this.totalLength = headerLength;
   }
 
   public byte[] serialize() {
@@ -61,6 +65,26 @@ public class TCPsegment {
     }
 
     return serialized;
+  }
+
+  public TCPsegment deserialize(byte[] data, int offset, int length) {
+    ByteBuffer bb = ByteBuffer.wrap(data, offset, length);
+    
+    this.sequenceNum = bb.getInt();
+    this.acknowledgement = bb.getInt();
+    this.timestamp = bb.getDouble();
+    int temp = bb.getInt();
+    this.flag = (byte) (temp & (1 << 3) - 1);
+    this.length = temp >> 3;
+    bb.getShort();
+    this.checksum = bb.getShort();
+    if (this.length != 0) {
+      this.data = new byte[this.length];
+      bb.get(this.data, 0, this.length);
+    } else 
+      this.data = null;
+
+    return this;
   }
 
 }
