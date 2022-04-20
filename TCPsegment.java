@@ -41,6 +41,8 @@ public class TCPsegment {
     bb.putInt(this.acknowledgement);
     bb.putDouble(this.timestamp);
     bb.putInt((this.length & (1 << 29) - 1) << 3 + this.flag);
+    bb.putShort((short) 0);
+    bb.putShort(this.checksum);
     if (this.data != null)
       bb.put(data);
 
@@ -54,10 +56,10 @@ public class TCPsegment {
       accumulation = ((accumulation >> 16) & 0xffff)
               + (accumulation & 0xffff);
       this.checksum = (short) (~accumulation & 0xffff);
-      bb.putShort(16, (short) 0);
-      bb.putShort(this.checksum);
+      // bb.putShort(16, (short) 0);
+      bb.putShort(18, this.checksum);
     }
-    
+
     return serialized;
   }
 
