@@ -5,6 +5,8 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketException;
+import java.util.Timer;
+import java.util.TimerTask;
 
 public class TCPsender {
 
@@ -21,11 +23,16 @@ public class TCPsender {
 
   protected double ERTT;
   protected double EDEV;
-  protected double TO = 5;
   protected double SRTT;
   protected double SDEV;
+  protected long TO = 5000; // initial timeout set to 5 secs
 
   protected long startTime = System.nanoTime();
+
+  protected Timer timer;
+  protected DatagramPacket packetToRetransmit = null;
+  protected TCPsegment tcpToRetransmit = null;
+  protected boolean received = false;
 
   public TCPsender(int port, InetAddress remoteIP, int remotePort, String fileName, int MTU, int sws) {
     this.port = port;
@@ -35,9 +42,9 @@ public class TCPsender {
     this.MTU = MTU - 20 - 8 - 24; // todo: figure out exact length of IPV4 headera and udp header
     this.sws = sws;
 
+    printInfo();
+    timer = new Timer();
     try {
-      printInfo();
-
       // parse file into a byte array
       File inFile = new File(fileName);
       FileInputStream fis = new FileInputStream(inFile);
@@ -45,8 +52,28 @@ public class TCPsender {
       // fis.read(fileByteArr);
       // fis.close();
 
-      // server initiate a SYN
       DatagramSocket socket = new DatagramSocket(port);
+
+      TimerTask retransmit = new TimerTask() {
+        @Override
+        public void run() {
+          if (received) {
+            timer.cancel();
+            return;
+          }
+          if (packetToRetransmit == null || tcpToRetransmit == null)
+            return;
+          try {
+            socket.send(packetToRetransmit);
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+          tcpToRetransmit.setTime(System.nanoTime() - startTime);
+          tcpToRetransmit.printInfo(true);
+        }
+      };
+
+      // server initiates a SYN
       TCPsegment initialTCP = new TCPsegment(TCPsegment.SYN, 0, System.nanoTime());
       byte[] buf = initialTCP.serialize();
       DatagramPacket initialPacket = new DatagramPacket(buf, buf.length, remoteIP, remotePort);
@@ -55,17 +82,24 @@ public class TCPsender {
       initialTCP.setTime(System.nanoTime() - this.startTime);
       initialTCP.printInfo(true);
 
+      // set up timer to retransmit first SYN
+      this.tcpToRetransmit = initialTCP;
+      this.packetToRetransmit = initialPacket;
+      timer.schedule(retransmit, this.TO, this.TO);
+
       // server receives SYN + ACK from client
       byte[] secondBuf = new byte[TCPsegment.headerLength];
       DatagramPacket secondPacket = new DatagramPacket(secondBuf, TCPsegment.headerLength);
       // System.out.println("Wait fot client SYN + ACK....");
       socket.receive(secondPacket);
+      this.received = true;
+      this.tcpToRetransmit = null;
+      this.packetToRetransmit = null;
       TCPsegment secondTCP = new TCPsegment();
       secondTCP = secondTCP.deserialize(secondPacket.getData(), 0, secondBuf.length);
       // output second SYN + ACK received
       secondTCP.setTime(System.nanoTime() - this.startTime);
       secondTCP.printInfo(false);
-
       // initial sequence number of server set to 0
       if (secondTCP.getAcknowledgement() != 1) {
         System.out.println("SYN + ACK from client confirmation fails.");
@@ -108,7 +142,19 @@ public class TCPsender {
         // server receives acknowledgement from client
         byte[] ackBuf = new byte[TCPsegment.headerLength];
         DatagramPacket ackPacket = new DatagramPacket(ackBuf, TCPsegment.headerLength);
+
+        // set retransmit parameters up
+        this.received = false;
+        this.tcpToRetransmit = dataTCP;
+        this.packetToRetransmit = dataPacket;
+
         socket.receive(ackPacket);
+
+        // release retransmit parameters 
+        this.received = true;
+        this.tcpToRetransmit = null;
+        this.packetToRetransmit = null;
+
         TCPsegment ackTCP = new TCPsegment();
         ackTCP = ackTCP.deserialize(ackPacket.getData(), 0, ackBuf.length);
         // output acknowledgement tcp received
@@ -145,13 +191,13 @@ public class TCPsender {
     if (sequenceNum == 0) {
       this.ERTT = currentTime - acknowledgedTimestamp;
       this.EDEV = 0;
-      this.TO = 2 * this.ERTT;
+      this.TO = Math.round(2 * this.ERTT * 1000);
     } else {
       this.SRTT = currentTime - acknowledgedTimestamp;
       this.SDEV = Math.abs(this.SRTT - this.ERTT);
       this.ERTT = a * this.ERTT + (1 - a) * this.SRTT;
       this.EDEV = b * this.EDEV + (1 - b) * this.SDEV;
-      this.TO = ERTT + 4 * this.EDEV;
+      this.TO = Math.round(ERTT + 4 * this.EDEV * 1000);
     }
   }
 

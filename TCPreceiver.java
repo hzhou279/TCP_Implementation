@@ -5,7 +5,6 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketException;
-import java.net.SocketTimeoutException;
 
 public class TCPreceiver {
   
@@ -125,9 +124,11 @@ public class TCPreceiver {
       System.out.println("An I/O exception occurs.");
       e.printStackTrace();
     } finally {
-      socket.close();
+      if (socket != null)
+        socket.close();
       try {
-        fos.close();
+        if (fos != null)
+          fos.close();
       } catch (IOException e) {
         e.printStackTrace();
       }
