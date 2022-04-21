@@ -15,6 +15,7 @@ public class TCPsegment {
   protected short checksum;
   protected byte[] data;
   protected int totalLength;
+  protected double time;
 
   public TCPsegment(byte flag, int sequenceNum, int acknowledgement, long timestamp, int length, byte[] data) {
     this.flag = flag;
@@ -140,10 +141,7 @@ public class TCPsegment {
       output += "snd ";
     else
       output += "rcv ";
-    
-    // todo: it should not be timestamp here
-    output += this.timestamp + " ";
-
+    output += this.time + " ";
     for (int i = 0; i < 4; i++)
       output += flagList[i] + " ";
     output += this.sequenceNum + " ";
@@ -218,5 +216,13 @@ public class TCPsegment {
 
   public void setTotalLength(int totalLength) {
     this.totalLength = totalLength;
+  }
+
+  public double getTime() {
+    return this.time;
+  }
+
+  public void setTime(double time) {
+    this.time = time;
   }
 }

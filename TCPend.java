@@ -39,7 +39,7 @@ public class TCPend {
       mode = 1;
 
       TCPsender sender = new TCPsender(port, remoteIP, remotePort, fileName, mtu, sws);
-      sender.printInfo();
+      // sender.printInfo();
     }
 
     // TCP receiver
@@ -51,7 +51,7 @@ public class TCPend {
       mode = 0;
 
       TCPreceiver receiver = new TCPreceiver(port, fileName, mtu, sws);
-      receiver.printInfo();
+      // receiver.printInfo();
     } 
     
   }
