@@ -6,7 +6,7 @@ public class TCPend {
   // protected int remoteIP;
   // protected int remotePort;
   // protected String fileName;
-  // protected byte mtu; // maximum transmission unit in bytes
+  // protected byte MTU; // maximum transmission unit in bytes
   // protected int sws; // sliding window size
   // protected int mode; // 1 for sender and 0 for receiver
 
@@ -15,7 +15,7 @@ public class TCPend {
     InetAddress remoteIP = null;
     int remotePort;
     String fileName;
-    byte mtu; // maximum transmission unit in bytes
+    int MTU; // maximum transmission unit in bytes
     int sws; // sliding window size
     int mode; // 1 for sender and 0 for receiver
 
@@ -34,23 +34,23 @@ public class TCPend {
       }
       remotePort = Integer.parseInt(args[5]);
       fileName = args[7];
-      mtu = (byte)Integer.parseInt(args[9]);
+      MTU = Integer.parseInt(args[9]);
       sws = Integer.parseInt(args[11]);
       mode = 1;
 
-      TCPsender sender = new TCPsender(port, remoteIP, remotePort, fileName, mtu, sws);
+      TCPsender sender = new TCPsender(port, remoteIP, remotePort, fileName, MTU, sws);
       // sender.printInfo();
     }
 
     // TCP receiver
     else {
       System.out.println(args[2]);
-      mtu = (byte)Integer.parseInt(args[3]);
+      MTU = Integer.parseInt(args[3]);
       sws = Integer.parseInt(args[5]);
       fileName = args[7];
       mode = 0;
 
-      TCPreceiver receiver = new TCPreceiver(port, fileName, mtu, sws);
+      TCPreceiver receiver = new TCPreceiver(port, fileName, MTU, sws);
       // receiver.printInfo();
     } 
     

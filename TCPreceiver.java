@@ -1,23 +1,32 @@
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketException;
+import java.net.SocketTimeoutException;
 
 public class TCPreceiver {
   
   protected int port;
+  protected InetAddress remoteIP;
+  protected int remotePort;
   protected String fileName;
-  protected byte mtu; // maximum transmission unit in bytes
+  protected int MTU; // maximum transmission unit in bytes
   protected int sws; // sliding window size
   protected int mode; // 1 for sender and 0 for receiver
 
   protected long startTime = System.nanoTime();
 
-  public TCPreceiver(int port, String fileName, byte mtu, int sws) {
+  protected DatagramSocket socket;
+  protected FileOutputStream fos;
+  protected File outFile;
+
+  public TCPreceiver(int port, String fileName, int MTU, int sws) {
     this.port = port;
     this.fileName = fileName;
-    this.mtu = mtu;
+    this.MTU = MTU - 20 - 8 - 24;
     this.sws = sws;
 
     
@@ -25,7 +34,7 @@ public class TCPreceiver {
       printInfo();
 
       // client receives initial SYN from server
-      DatagramSocket socket = new DatagramSocket(port);
+      socket = new DatagramSocket(port);
       byte[] buf = new byte[TCPsegment.headerLength];
       DatagramPacket initialPacket = new DatagramPacket(buf, TCPsegment.headerLength);
       // System.out.println("Wait fot server SYN....");
@@ -67,18 +76,65 @@ public class TCPreceiver {
       }
 
       System.out.println("Connection established!!!\n-----Begin data transmission-----");
+
+      outFile = new File(this.fileName);
+      if (!outFile.createNewFile()) {
+        System.out.println("Output file exists.");
+        System.exit(1);
+      }
+      fos = new FileOutputStream(outFile);
+
+      // set server IP and port up
+      this.remoteIP = finalPacket.getAddress();
+      this.remotePort = finalPacket.getPort();
+
+      // begin data transmission
+      while (true) {
+        // client receives data from server
+        byte[] tcpBuf = new byte[this.MTU + TCPsegment.headerLength];
+        DatagramPacket dataPacket = new DatagramPacket(tcpBuf, tcpBuf.length);
+        socket.setSoTimeout(5 * 1000);
+        socket.receive(dataPacket);
+        TCPsegment dataTCP = new TCPsegment();
+        dataTCP = dataTCP.deserialize(dataPacket.getData(), 0, tcpBuf.length); // dataBuf.length mismatch
+        // output data tcp received
+        dataTCP.setTime(System.nanoTime() - this.startTime);
+        dataTCP.printInfo(false);
+
+        // write data received into output file
+        if (dataTCP.getData() == null)
+          System.out.println("dataTCP.getData() is null");
+        byte[] dataBuf = dataTCP.getData();
+        fos.write(dataBuf);
+
+        // clients sends out acknowledgement to server
+        TCPsegment ackTCP = new TCPsegment(TCPsegment.ACK, 1, dataTCP.getSequenceNum() + this.MTU, dataTCP.getTimestamp());
+        byte[] ackBuf = ackTCP.serialize();
+        DatagramPacket ackPacket = new DatagramPacket(ackBuf, ackBuf.length, remoteIP, remotePort);
+        socket.send(ackPacket);
+        // output acknowledgement TCP segment sent
+        ackTCP.setTime(System.nanoTime() - this.startTime);
+        ackTCP.printInfo(true);
+      }
       
-      socket.close();
+      // socket.close();
     } catch (SocketException e) {
       System.out.println("Sender socket error.");
       e.printStackTrace();
     } catch (IOException e) {
       System.out.println("An I/O exception occurs.");
       e.printStackTrace();
+    } finally {
+      socket.close();
+      try {
+        fos.close();
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
     }
   }
 
   public void printInfo() {
-    System.out.println("TCP client created with port: " + port + " fileName: " + fileName + " mtu: " + mtu + " sws: " + sws);
+    System.out.println("TCP client created with port: " + port + " fileName: " + fileName + " MTU: " + MTU + " sws: " + sws);
   }
 }
