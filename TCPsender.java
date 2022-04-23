@@ -58,21 +58,21 @@ public class TCPsender {
       socket = new DatagramSocket(port);
 
       // TimerTask retransmit = new TimerTask() {
-      //   @Override
-      //   public void run() {
-      //     // if (received || packetToRetransmit == null || tcpToRetransmit == null) {
-      //     //   System.out.println("timer cancelled once.");
-      //     //   timer.cancel();
-      //     //   return;
-      //     // }
-      //     try {
-      //       socket.send(packetToRetransmit);
-      //     } catch (IOException e) {
-      //       e.printStackTrace();
-      //     }
-      //     tcpToRetransmit.setTime(System.nanoTime() - startTime);
-      //     tcpToRetransmit.printInfo(true);
-      //   }
+      // @Override
+      // public void run() {
+      // // if (received || packetToRetransmit == null || tcpToRetransmit == null) {
+      // // System.out.println("timer cancelled once.");
+      // // timer.cancel();
+      // // return;
+      // // }
+      // try {
+      // socket.send(packetToRetransmit);
+      // } catch (IOException e) {
+      // e.printStackTrace();
+      // }
+      // tcpToRetransmit.setTime(System.nanoTime() - startTime);
+      // tcpToRetransmit.printInfo(true);
+      // }
       // };
 
       // server initiates a SYN
@@ -137,7 +137,7 @@ public class TCPsender {
           break;
         byte[] dataBuf = new byte[numBytes];
         // if (fis.read(dataBuf, 0, numBytes) == -1)
-        //   break;
+        // break;
         fis.read(dataBuf, 0, numBytes);
         TCPsegment dataTCP = new TCPsegment(TCPsegment.ACK, sequenceNum, acknowledgement, System.nanoTime(),
             numBytes, dataBuf);
@@ -161,7 +161,7 @@ public class TCPsender {
 
         socket.receive(ackPacket);
 
-        // release retransmit parameters 
+        // release retransmit parameters
         this.received = true;
         this.tcpToRetransmit = null;
         this.packetToRetransmit = null;
@@ -189,7 +189,7 @@ public class TCPsender {
       fis.close();
 
       // server sends first FIN to start end connection process
-      TCPsegment firstFINTCP = new TCPsegment((byte)(TCPsegment.FIN + TCPsegment.ACK), sequenceNum, System.nanoTime());
+      TCPsegment firstFINTCP = new TCPsegment((byte) (TCPsegment.FIN + TCPsegment.ACK), sequenceNum, System.nanoTime());
       byte[] firstFINBuf = firstFINTCP.serialize();
       DatagramPacket firstFINPacket = new DatagramPacket(firstFINBuf, firstFINBuf.length, remoteIP, remotePort);
       socket.send(firstFINPacket);

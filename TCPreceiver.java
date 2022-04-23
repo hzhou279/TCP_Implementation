@@ -7,7 +7,7 @@ import java.net.InetAddress;
 import java.net.SocketException;
 
 public class TCPreceiver {
-  
+
   protected int port;
   protected InetAddress remoteIP;
   protected int remotePort;
@@ -28,7 +28,6 @@ public class TCPreceiver {
     this.MTU = MTU - 20 - 8 - 24;
     this.sws = sws;
 
-    
     try {
       printInfo();
 
@@ -45,9 +44,10 @@ public class TCPreceiver {
       initialTCP.printInfo(false);
 
       // client sends subsequent SYN + ACK back to server
-      int acknowledgement = initialTCP.getSequenceNum() + 1;
+      // int acknowledgement = initialTCP.getSequenceNum() + 1;
       long acknowledgedTimestamp = initialTCP.getTimestamp();
-      TCPsegment secondTCP = new TCPsegment((byte)(TCPsegment.SYN + TCPsegment.ACK), 0, acknowledgement, acknowledgedTimestamp);
+      TCPsegment secondTCP = new TCPsegment((byte) (TCPsegment.SYN + TCPsegment.ACK), 0,
+          initialTCP.getSequenceNum() + 1, acknowledgedTimestamp);
       byte[] secondBuf = secondTCP.serialize();
       InetAddress serverIP = initialPacket.getAddress();
       int serverPort = initialPacket.getPort();
@@ -88,6 +88,7 @@ public class TCPreceiver {
       this.remotePort = finalPacket.getPort();
 
       // begin data transmission
+      int acknowledgementNum = 1;
       while (true) {
         // client receives data from server
         byte[] tcpBuf = new byte[this.MTU + TCPsegment.headerLength];
@@ -103,9 +104,11 @@ public class TCPreceiver {
         // check if client receives first FIN from server
         if (dataTCP.getFlag() == TCPsegment.FIN + TCPsegment.ACK) {
           // clients sends out second FIN + ACK to server
-          TCPsegment secondFINACKTCP = new TCPsegment((byte)(TCPsegment.FIN + TCPsegment.ACK), 1, dataTCP.getSequenceNum() + 1, dataTCP.getTimestamp());
+          TCPsegment secondFINACKTCP = new TCPsegment((byte) (TCPsegment.FIN + TCPsegment.ACK), 1,
+              dataTCP.getSequenceNum() + 1, dataTCP.getTimestamp());
           byte[] secondFINACKBuf = secondFINACKTCP.serialize();
-          DatagramPacket secondFINACKPacket = new DatagramPacket(secondFINACKBuf, secondFINACKBuf.length, remoteIP, remotePort);
+          DatagramPacket secondFINACKPacket = new DatagramPacket(secondFINACKBuf, secondFINACKBuf.length, remoteIP,
+              remotePort);
           socket.send(secondFINACKPacket);
           // output second FIN + ACK TCP segment sent
           secondFINACKTCP.setTime(System.nanoTime() - this.startTime);
@@ -114,13 +117,19 @@ public class TCPreceiver {
         }
 
         // write data received into output file
-        if (dataTCP.getData() == null)
-          System.out.println("dataTCP.getData() is null");
-        byte[] dataBuf = dataTCP.getData();
-        fos.write(dataBuf);
+        // drop duplicate data package
+        if (dataTCP.getSequenceNum() >= acknowledgementNum) {
+          if (dataTCP.getData() == null)
+            System.out.println("dataTCP.getData() is null");
+          byte[] dataBuf = dataTCP.getData();
+          fos.write(dataBuf);
+          
+          // update acknowledgement number
+          acknowledgementNum += dataTCP.getLength();
+        }
 
         // clients sends out acknowledgement to server
-        TCPsegment ackTCP = new TCPsegment(TCPsegment.ACK, 1, dataTCP.getSequenceNum() + dataTCP.getLength(), dataTCP.getTimestamp());
+        TCPsegment ackTCP = new TCPsegment(TCPsegment.ACK, 1, acknowledgementNum, dataTCP.getTimestamp());
         byte[] ackBuf = ackTCP.serialize();
         DatagramPacket ackPacket = new DatagramPacket(ackBuf, ackBuf.length, remoteIP, remotePort);
         socket.send(ackPacket);
@@ -139,7 +148,6 @@ public class TCPreceiver {
       lastACKTCP.setTime(System.nanoTime() - this.startTime);
       lastACKTCP.printInfo(false);
 
-      
       socket.close();
     } catch (SocketException e) {
       System.out.println("Sender socket error.");
@@ -160,6 +168,7 @@ public class TCPreceiver {
   }
 
   public void printInfo() {
-    System.out.println("TCP client created with port: " + port + " fileName: " + fileName + " MTU: " + MTU + " sws: " + sws);
+    System.out
+        .println("TCP client created with port: " + port + " fileName: " + fileName + " MTU: " + MTU + " sws: " + sws);
   }
 }
