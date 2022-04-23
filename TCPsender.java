@@ -115,6 +115,10 @@ public class TCPsender {
         System.exit(1);
       }
 
+      // update timeout
+      computeRTT(secondTCP.getSequenceNum(), System.nanoTime(), secondTCP.getTimestamp());
+      System.out.println("\nCurrent timeout: " + this.TO);
+
       // server sends out final ACK to establish connection
       int acknowledgement = secondTCP.getSequenceNum() + 1;
       TCPsegment finalTCP = new TCPsegment(TCPsegment.ACK, 1, acknowledgement, System.nanoTime());
@@ -174,6 +178,10 @@ public class TCPsender {
         // output acknowledgement tcp received
         ackTCP.setTime(System.nanoTime() - this.startTime);
         ackTCP.printInfo(false);
+
+        // update timeout
+        computeRTT(ackTCP.getSequenceNum(), System.nanoTime(), ackTCP.getTimestamp());
+        System.out.println("\nCurrent timeout: " + this.TO);
 
         // check acknowledgement number
         if (ackTCP.getAcknowledgement() != sequenceNum + numBytes) {
@@ -256,13 +264,13 @@ public class TCPsender {
     if (sequenceNum == 0) {
       this.ERTT = currentTime - acknowledgedTimestamp;
       this.EDEV = 0;
-      this.TO = Math.round(2 * this.ERTT * 1000);
+      this.TO = Math.round(2 * this.ERTT / 1000000);
     } else {
       this.SRTT = currentTime - acknowledgedTimestamp;
       this.SDEV = Math.abs(this.SRTT - this.ERTT);
       this.ERTT = a * this.ERTT + (1 - a) * this.SRTT;
       this.EDEV = b * this.EDEV + (1 - b) * this.SDEV;
-      this.TO = Math.round(ERTT + 4 * this.EDEV * 1000);
+      this.TO = Math.round((this.ERTT + 4 * this.EDEV) / 1000000);
     }
   }
 

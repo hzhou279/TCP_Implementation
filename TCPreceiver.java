@@ -123,7 +123,7 @@ public class TCPreceiver {
             System.out.println("dataTCP.getData() is null");
           byte[] dataBuf = dataTCP.getData();
           fos.write(dataBuf);
-          
+
           // update acknowledgement number
           acknowledgementNum += dataTCP.getLength();
         }
