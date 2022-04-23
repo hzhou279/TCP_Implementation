@@ -29,7 +29,10 @@ public class TCPsender {
 
   protected long startTime = System.nanoTime();
 
+  protected DatagramSocket socket;
+
   protected Timer timer;
+  protected TimerTask retransmit;
   protected DatagramPacket packetToRetransmit = null;
   protected TCPsegment tcpToRetransmit = null;
   protected boolean received = false;
@@ -52,26 +55,25 @@ public class TCPsender {
       // fis.read(fileByteArr);
       // fis.close();
 
-      DatagramSocket socket = new DatagramSocket(port);
+      socket = new DatagramSocket(port);
 
-      TimerTask retransmit = new TimerTask() {
-        @Override
-        public void run() {
-          if (received) {
-            timer.cancel();
-            return;
-          }
-          if (packetToRetransmit == null || tcpToRetransmit == null)
-            return;
-          try {
-            socket.send(packetToRetransmit);
-          } catch (IOException e) {
-            e.printStackTrace();
-          }
-          tcpToRetransmit.setTime(System.nanoTime() - startTime);
-          tcpToRetransmit.printInfo(true);
-        }
-      };
+      // TimerTask retransmit = new TimerTask() {
+      //   @Override
+      //   public void run() {
+      //     // if (received || packetToRetransmit == null || tcpToRetransmit == null) {
+      //     //   System.out.println("timer cancelled once.");
+      //     //   timer.cancel();
+      //     //   return;
+      //     // }
+      //     try {
+      //       socket.send(packetToRetransmit);
+      //     } catch (IOException e) {
+      //       e.printStackTrace();
+      //     }
+      //     tcpToRetransmit.setTime(System.nanoTime() - startTime);
+      //     tcpToRetransmit.printInfo(true);
+      //   }
+      // };
 
       // server initiates a SYN
       TCPsegment initialTCP = new TCPsegment(TCPsegment.SYN, 0, System.nanoTime());
@@ -85,6 +87,7 @@ public class TCPsender {
       // set up timer to retransmit first SYN
       this.tcpToRetransmit = initialTCP;
       this.packetToRetransmit = initialPacket;
+      retransmit = this.createRetransmitTask();
       timer.schedule(retransmit, this.TO, this.TO);
 
       // server receives SYN + ACK from client
@@ -92,9 +95,15 @@ public class TCPsender {
       DatagramPacket secondPacket = new DatagramPacket(secondBuf, TCPsegment.headerLength);
       // System.out.println("Wait fot client SYN + ACK....");
       socket.receive(secondPacket);
+
+      // release timer
       this.received = true;
       this.tcpToRetransmit = null;
       this.packetToRetransmit = null;
+      retransmit.cancel();
+      retransmit = null;
+      timer.purge();
+
       TCPsegment secondTCP = new TCPsegment();
       secondTCP = secondTCP.deserialize(secondPacket.getData(), 0, secondBuf.length);
       // output second SYN + ACK received
@@ -120,7 +129,7 @@ public class TCPsender {
       int sequenceNum = 1;
       while (true) {
         // server sends data segment to client
-        System.out.println("current sequence number is: " + sequenceNum);
+        // System.out.println("current sequence number is: " + sequenceNum);
         int numBytes = this.MTU;
         if (fis.available() < this.MTU)
           numBytes = fis.available();
@@ -147,6 +156,8 @@ public class TCPsender {
         this.received = false;
         this.tcpToRetransmit = dataTCP;
         this.packetToRetransmit = dataPacket;
+        retransmit = this.createRetransmitTask();
+        timer.schedule(retransmit, this.TO, this.TO);
 
         socket.receive(ackPacket);
 
@@ -154,6 +165,9 @@ public class TCPsender {
         this.received = true;
         this.tcpToRetransmit = null;
         this.packetToRetransmit = null;
+        retransmit.cancel();
+        retransmit = null;
+        timer.purge();
 
         TCPsegment ackTCP = new TCPsegment();
         ackTCP = ackTCP.deserialize(ackPacket.getData(), 0, ackBuf.length);
@@ -162,16 +176,67 @@ public class TCPsender {
         ackTCP.printInfo(false);
 
         // check acknowledgement number
-        if (ackTCP.getAcknowledgement() != sequenceNum + this.MTU) {
+        if (ackTCP.getAcknowledgement() != sequenceNum + numBytes) {
           System.out.println("Acknowledgement number mismatch.");
           System.exit(1); // todo: check if client close the connection
         }
 
         // update sequence number
-        sequenceNum += this.MTU;
+        sequenceNum += numBytes;
       }
 
+      // data transmission finished, close the file input stream
       fis.close();
+
+      // server sends first FIN to start end connection process
+      TCPsegment firstFINTCP = new TCPsegment((byte)(TCPsegment.FIN + TCPsegment.ACK), sequenceNum, System.nanoTime());
+      byte[] firstFINBuf = firstFINTCP.serialize();
+      DatagramPacket firstFINPacket = new DatagramPacket(firstFINBuf, firstFINBuf.length, remoteIP, remotePort);
+      socket.send(firstFINPacket);
+      // output first FIN sent
+      firstFINTCP.setTime(System.nanoTime() - this.startTime);
+      firstFINTCP.printInfo(true);
+
+      // set up timer to retransmit first FIN
+      this.received = false;
+      this.tcpToRetransmit = firstFINTCP;
+      this.packetToRetransmit = firstFINPacket;
+      retransmit = this.createRetransmitTask();
+      timer.schedule(retransmit, this.TO, this.TO);
+
+      // server receives second FIN + ACK from client
+      byte[] secondFINACKBuf = new byte[TCPsegment.headerLength];
+      DatagramPacket secondFINACKPacket = new DatagramPacket(secondFINACKBuf, TCPsegment.headerLength);
+      socket.receive(secondFINACKPacket);
+
+      // release timer parameters
+      this.received = true;
+      this.tcpToRetransmit = null;
+      this.packetToRetransmit = null;
+      retransmit.cancel();
+      retransmit = null;
+      timer.purge();
+
+      TCPsegment secondFINACKTCP = new TCPsegment();
+      secondFINACKTCP = secondFINACKTCP.deserialize(secondFINACKPacket.getData(), 0, secondFINACKBuf.length);
+      // output second FIN + ACK received
+      secondFINACKTCP.setTime(System.nanoTime() - this.startTime);
+      secondFINACKTCP.printInfo(false);
+
+      if (secondFINACKTCP.getAcknowledgement() != sequenceNum + 1) {
+        System.out.println("Acknowledgement of FIN + ACK from client mismatch.");
+      }
+
+      // server sends out last ACK
+      TCPsegment lastACKTCP = new TCPsegment(TCPsegment.ACK, secondFINACKTCP.getSequenceNum() + 1, System.nanoTime());
+      byte[] lastACKBuf = lastACKTCP.serialize();
+      DatagramPacket lastACKPacket = new DatagramPacket(lastACKBuf, lastACKBuf.length, remoteIP, remotePort);
+      socket.send(lastACKPacket);
+      // output last ACK sent
+      lastACKTCP.setTime(System.nanoTime() - this.startTime);
+      lastACKTCP.printInfo(true);
+
+      timer.cancel();
       socket.close();
     } catch (SocketException e) {
       System.out.println("Sender socket error.");
@@ -199,6 +264,26 @@ public class TCPsender {
       this.EDEV = b * this.EDEV + (1 - b) * this.SDEV;
       this.TO = Math.round(ERTT + 4 * this.EDEV * 1000);
     }
+  }
+
+  public TimerTask createRetransmitTask() {
+    return new TimerTask() {
+      @Override
+      public void run() {
+        if (received || packetToRetransmit == null || tcpToRetransmit == null) {
+          System.out.println("timer cancelled once.");
+          // timer.cancel();
+          return;
+        }
+        try {
+          socket.send(packetToRetransmit);
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+        tcpToRetransmit.setTime(System.nanoTime() - startTime);
+        tcpToRetransmit.printInfo(true);
+      }
+    };
   }
 
   // @Override

@@ -132,6 +132,10 @@ public class TCPsegment {
       flagList[0] = "S";
       flagList[1] = "A";
     }
+    else if (this.flag == TCPsegment.FIN + TCPsegment.ACK) {
+      flagList[2] = "F";
+      flagList[1] = "A";
+    }
     else
       flagList[2] = "F";
     if (this.data != null)

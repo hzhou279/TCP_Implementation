@@ -92,13 +92,26 @@ public class TCPreceiver {
         // client receives data from server
         byte[] tcpBuf = new byte[this.MTU + TCPsegment.headerLength];
         DatagramPacket dataPacket = new DatagramPacket(tcpBuf, tcpBuf.length);
-        socket.setSoTimeout(5 * 1000);
+        // socket.setSoTimeout(5 * 1000);
         socket.receive(dataPacket);
         TCPsegment dataTCP = new TCPsegment();
         dataTCP = dataTCP.deserialize(dataPacket.getData(), 0, tcpBuf.length); // dataBuf.length mismatch
         // output data tcp received
         dataTCP.setTime(System.nanoTime() - this.startTime);
         dataTCP.printInfo(false);
+
+        // check if client receives first FIN from server
+        if (dataTCP.getFlag() == TCPsegment.FIN + TCPsegment.ACK) {
+          // clients sends out second FIN + ACK to server
+          TCPsegment secondFINACKTCP = new TCPsegment((byte)(TCPsegment.FIN + TCPsegment.ACK), 1, dataTCP.getSequenceNum() + 1, dataTCP.getTimestamp());
+          byte[] secondFINACKBuf = secondFINACKTCP.serialize();
+          DatagramPacket secondFINACKPacket = new DatagramPacket(secondFINACKBuf, secondFINACKBuf.length, remoteIP, remotePort);
+          socket.send(secondFINACKPacket);
+          // output second FIN + ACK TCP segment sent
+          secondFINACKTCP.setTime(System.nanoTime() - this.startTime);
+          secondFINACKTCP.printInfo(true);
+          break;
+        }
 
         // write data received into output file
         if (dataTCP.getData() == null)
@@ -107,7 +120,7 @@ public class TCPreceiver {
         fos.write(dataBuf);
 
         // clients sends out acknowledgement to server
-        TCPsegment ackTCP = new TCPsegment(TCPsegment.ACK, 1, dataTCP.getSequenceNum() + this.MTU, dataTCP.getTimestamp());
+        TCPsegment ackTCP = new TCPsegment(TCPsegment.ACK, 1, dataTCP.getSequenceNum() + dataTCP.getLength(), dataTCP.getTimestamp());
         byte[] ackBuf = ackTCP.serialize();
         DatagramPacket ackPacket = new DatagramPacket(ackBuf, ackBuf.length, remoteIP, remotePort);
         socket.send(ackPacket);
@@ -115,8 +128,19 @@ public class TCPreceiver {
         ackTCP.setTime(System.nanoTime() - this.startTime);
         ackTCP.printInfo(true);
       }
+
+      // client receives last ACK from server
+      byte[] lastACKBuf = new byte[TCPsegment.headerLength];
+      DatagramPacket lastACKPacket = new DatagramPacket(lastACKBuf, lastACKBuf.length);
+      socket.receive(lastACKPacket);
+      TCPsegment lastACKTCP = new TCPsegment();
+      lastACKTCP = lastACKTCP.deserialize(lastACKPacket.getData(), 0, lastACKBuf.length); // dataBuf.length mismatch
+      // output last ACK received
+      lastACKTCP.setTime(System.nanoTime() - this.startTime);
+      lastACKTCP.printInfo(false);
+
       
-      // socket.close();
+      socket.close();
     } catch (SocketException e) {
       System.out.println("Sender socket error.");
       e.printStackTrace();
