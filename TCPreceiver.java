@@ -61,6 +61,13 @@ public class TCPreceiver {
         dataTCP.setTime(System.nanoTime() - startTime);
         dataTCP.printInfo(false);
 
+        // client drops dataTCP out of current sliding window
+        if (dataTCP.getSequenceNum() > ackedSeqNum + (sws+1) * MTU || dataTCP.getSequenceNum() < ackedSeqNum) {
+          System.out.println("seqNum: " + dataTCP.getSequenceNum() + " ackedSeqNum: " + ackedSeqNum);
+          System.out.println("Sliding window from: " + ackedSeqNum + " to: " + (ackedSeqNum + (sws+1) * MTU));
+          continue;
+        }
+
         // check if data packet is valid
         if (dataTCP.getData() != null && dataTCP.getLength() != dataTCP.getData().length) {
           System.out.println("drop once");
@@ -214,6 +221,8 @@ public class TCPreceiver {
       // set server IP and port up
       this.remoteIP = finalPacket.getAddress();
       this.remotePort = finalPacket.getPort();
+
+      this.ackedSeqNum = 1;
 
       // // begin data transmission
       // int acknowledgementNum = 1;

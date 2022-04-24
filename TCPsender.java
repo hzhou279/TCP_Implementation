@@ -7,10 +7,14 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketException;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.LinkedBlockingQueue;
+
+// import javax.xml.crypto.Data;
 
 public class TCPsender {
 
@@ -37,9 +41,9 @@ public class TCPsender {
 
   protected Timer timer;
   protected TimerTask retransmit;
-  protected DatagramPacket packetToRetransmit = null;
-  protected TCPsegment tcpToRetransmit = null;
-  protected boolean received = false;
+  // protected DatagramPacket packetToRetransmit = null;
+  // protected TCPsegment tcpToRetransmit = null;
+  // protected boolean received = false;
 
   protected LinkedBlockingQueue<TCPsegment> slidingWindow;
   protected Integer ackedSeqNum;
@@ -50,6 +54,23 @@ public class TCPsender {
   protected long fileLength;
 
   protected Map<Integer, Integer> ackSeqNumCntMap;
+  // protected Map<Integer, TimerTask> retransmitThreads;
+  protected LinkedList<retransmitThread> retransmitThreads;
+
+  class retransmitThread {
+    protected TimerTask task;
+    protected Integer segmentIdx;
+    public retransmitThread(TimerTask task, Integer segmentIdx) {
+      this.task = task;
+      this.segmentIdx = segmentIdx;
+    }
+    public Integer getSegmentIdx() {
+      return this.segmentIdx;
+    }
+    public void cancel() {
+      this.task.cancel();
+    }
+  }
 
   class Producer implements Runnable {
     protected final LinkedBlockingQueue<TCPsegment> queue;
@@ -94,20 +115,20 @@ public class TCPsender {
 
           // fail
           // synchronized(ackedSeqNum) {
-          //   if (fis.skip(ackedSeqNum) == -1) {
-          //     this.queue.add(new TCPsegment());
-          //     // return;
-          //     break;
-          //   }
+          // if (fis.skip(ackedSeqNum) == -1) {
+          // this.queue.add(new TCPsegment());
+          // // return;
+          // break;
           // }
-          synchronized(curSeqNum) {
+          // }
+          synchronized (curSeqNum) {
             if (fis.skip(curSeqNum - 1) == -1) {
               this.queue.add(new TCPsegment());
               // return;
               break;
             }
           }
-          
+
           if (fis.available() < MTU)
             numBytes = fis.available();
 
@@ -181,6 +202,13 @@ public class TCPsender {
         // output data TCP segment sent
         dataTCP.setTime(System.nanoTime() - startTime);
         dataTCP.printInfo(true);
+
+        // set up timer to retransmit the lost package
+        TimerTask temp = createRetransmitTask(dataTCP, dataPacket);
+        // retransmitThreads.put(dataTCP.getSequenceNum(), temp);
+        retransmitThreads.add(new retransmitThread(temp, curSegIdx));
+        timer.schedule(temp, TO, TO);
+
         if (ackedSeqNum >= fileLength)
           return;
         // System.out.println("curSeqNum: " + curSeqNum + " ackedSeqNum: " +
@@ -200,6 +228,8 @@ public class TCPsender {
     this.MTU = MTU - 20 - 8 - 24; // todo: figure out exact length of IPV4 headera and udp header
     this.SWS = SWS;
     this.slidingWindow = new LinkedBlockingQueue<TCPsegment>(this.SWS);
+    // this.retransmitThreads = new HashMap<Integer, TimerTask>();
+    this.retransmitThreads = new LinkedList<retransmitThread>();
 
     printInfo();
     timer = new Timer();
@@ -221,9 +251,10 @@ public class TCPsender {
       initialTCP.printInfo(true);
 
       // set up timer to retransmit first SYN
-      this.tcpToRetransmit = initialTCP;
-      this.packetToRetransmit = initialPacket;
-      retransmit = this.createRetransmitTask();
+      // this.tcpToRetransmit = initialTCP;
+      // this.packetToRetransmit = initialPacket;
+      // retransmit = this.createRetransmitTask();
+      retransmit = this.createRetransmitTask(initialTCP, initialPacket);
       timer.schedule(retransmit, this.TO, this.TO);
 
       // server receives SYN + ACK from client
@@ -233,9 +264,9 @@ public class TCPsender {
       socket.receive(secondPacket);
 
       // release timer
-      this.received = true;
-      this.tcpToRetransmit = null;
-      this.packetToRetransmit = null;
+      // this.received = true;
+      // this.tcpToRetransmit = null;
+      // this.packetToRetransmit = null;
       retransmit.cancel();
       retransmit = null;
       timer.purge();
@@ -356,7 +387,7 @@ public class TCPsender {
         socket.receive(ackPacket);
 
         // synchronized (this.curAckedSegIdx) {
-        //   this.curAckedSegIdx++;
+        // this.curAckedSegIdx++;
         // }
 
         TCPsegment ackTCP = new TCPsegment();
@@ -370,35 +401,113 @@ public class TCPsender {
         // System.out.println("\nCurrent timeout: " + this.TO);
 
         // update ackedSeqNum
+
+        // todo: sender receives ack number and consider it as the most updated one from receiver
+        // and update ackedSeqNum to be curAckedSeqNum.
         int curAckedSeqNum = ackTCP.getAcknowledgement();
         synchronized (this.curAckedSegIdx) {
           System.out.println("\ncurAckedSeqNum: " + curAckedSeqNum + " curAckedSegIdx: " +
-          curAckedSegIdx);
+              curAckedSegIdx);
           System.out.println("ackedSeqNum: " + ackedSeqNum + " curAckedSegIdx: " +
               curAckedSegIdx + "\n");
-          if (curAckedSeqNum == (this.curAckedSegIdx + 1) * this.MTU + 1) {
-            System.out.println("reach 371");
-            this.curAckedSegIdx++;
-            synchronized (this.ackedSeqNum) {
-              if (this.ackedSeqNum == 0)
-                this.ackedSeqNum++;
-              this.ackedSeqNum = this.ackedSeqNum + this.MTU;
+
+          synchronized (this.ackedSeqNum) {
+            if (this.ackedSeqNum == 0)
+              this.ackedSeqNum++;
+            this.ackedSeqNum = curAckedSeqNum;
+            if ((curAckedSeqNum - 1) % this.MTU == 0) {
+              this.curAckedSegIdx = (curAckedSeqNum - 1) / this.MTU;
+              // TimerTask temp = this.retransmitThreads.get(curAckedSeqNum - this.MTU);
+              // TimerTask temp = this.retransmitThreads.get(this.curAckedSegIdx);
+              Iterator<retransmitThread> it = this.retransmitThreads.descendingIterator();
+              while (it.hasNext()) {
+                retransmitThread curThread = it.next();
+                if (curThread.getSegmentIdx() <= curAckedSegIdx) {
+                  curThread.cancel();
+                }
+              }
+              this.retransmitThreads.removeIf(cur -> (cur.getSegmentIdx() <= curAckedSegIdx));
+              // temp.cancel();
+              timer.purge();
             }
-          } else if (curAckedSeqNum == this.fileLength + 1 && curAckedSegIdx == (int) (this.fileLength / this.MTU)) {
-            this.curAckedSegIdx++;
-            this.ackedSeqNum = (int) this.fileLength + 1;
-            break;
+            
+            if (curAckedSeqNum == this.fileLength + 1 && curAckedSegIdx == (int) (this.fileLength / this.MTU)) {
+              this.curAckedSegIdx++;
+              this.ackedSeqNum = (int) this.fileLength + 1;
+              // TimerTask temp = this.retransmitThreads.get((int) (this.fileLength / this.MTU) + 1);
+              // temp.cancel();
+              // timer.purge();
+              break;
+            }
           }
+
+          // if (curAckedSeqNum == (this.curAckedSegIdx + 1) * this.MTU + 1) {
+          //   System.out.println("reach 371");
+          //   this.curAckedSegIdx++;
+          //   synchronized (this.ackedSeqNum) {
+          //     if (this.ackedSeqNum == 0)
+          //       this.ackedSeqNum++;
+          //     this.ackedSeqNum = this.ackedSeqNum + this.MTU;
+          //   }
+            
+          //   // cancel retransmit timer task
+          //   TimerTask temp = this.retransmitThreads.get(curAckedSeqNum - this.MTU);
+          //   temp.cancel();
+          //   timer.purge();
+          // } else if (curAckedSeqNum == this.fileLength + 1 && curAckedSegIdx == (int) (this.fileLength / this.MTU)) {
+          //   this.curAckedSegIdx++;
+          //   this.ackedSeqNum = (int) this.fileLength + 1;
+          //   break;
+          // }
         }
         if (this.ackSeqNumCntMap.containsKey(curAckedSeqNum)) {
           // increment current ackedSeqNum count
           int curAckedSeqNumCnt = this.ackSeqNumCntMap.get(curAckedSeqNum);
           // indicate that at least one segment lost
           if (curAckedSeqNumCnt > 2) {
-            // retransmit
+            // retransmit this package
+            int numBytes = this.MTU;
+            fis = new FileInputStream(inFile);
+            if (fis.skip(curAckedSeqNum) == -1) {
+              System.out.println("reach 403");
+              continue;
+            }
+            if (fis.available() < this.MTU)
+              numBytes = fis.available();
+            if (numBytes == 0) {
+              System.out.println("reach 409");
+              continue;
+            }
+            byte[] dataBuf = new byte[numBytes];
+            fis.read(dataBuf, 0, numBytes);
+            TCPsegment dataTCP = new TCPsegment(TCPsegment.ACK, curAckedSeqNum, 1, System.nanoTime(),
+                numBytes, dataBuf);
+            curSeqNum = curAckedSeqNum + numBytes;
+            curSegIdx = (curAckedSeqNum - 1) % this.MTU;
 
+            byte[] tcpBuf = dataTCP.serialize();
+            DatagramPacket dataPacket = new DatagramPacket(tcpBuf, tcpBuf.length, remoteIP, remotePort);
+            socket.send(dataPacket);
+            // output data TCP segment sent
+            dataTCP.setTime(System.nanoTime() - startTime);
+            dataTCP.printInfo(true);
 
-            
+            this.ackSeqNumCntMap.put(curAckedSeqNum, 0);
+
+            // set up timer to retransmit the lost package
+            // this.tcpToRetransmit = initialTCP;
+            // this.packetToRetransmit = initialPacket;
+            // retransmit = this.createRetransmitTask();
+            // timer.schedule(retransmit, this.TO, this.TO);
+
+            // release timer
+            // this.received = true;
+            // this.tcpToRetransmit = null;
+            // this.packetToRetransmit = null;
+            // retransmit.cancel();
+            // retransmit = null;
+            // timer.purge();
+
           } else {
             this.ackSeqNumCntMap.put(curAckedSeqNum, curAckedSeqNumCnt + 1);
           }
@@ -443,10 +552,11 @@ public class TCPsender {
       firstFINTCP.printInfo(true);
 
       // set up timer to retransmit first FIN
-      this.received = false;
-      this.tcpToRetransmit = firstFINTCP;
-      this.packetToRetransmit = firstFINPacket;
-      retransmit = this.createRetransmitTask();
+      // this.received = false;
+      // this.tcpToRetransmit = firstFINTCP;
+      // this.packetToRetransmit = firstFINPacket;
+      // retransmit = this.createRetransmitTask();
+      retransmit = this.createRetransmitTask(firstFINTCP, firstFINPacket);
       timer.schedule(retransmit, this.TO, this.TO);
 
       // server receives second FIN + ACK from client
@@ -455,9 +565,9 @@ public class TCPsender {
       socket.receive(secondFINACKPacket);
 
       // release timer parameters
-      this.received = true;
-      this.tcpToRetransmit = null;
-      this.packetToRetransmit = null;
+      // this.received = true;
+      // this.tcpToRetransmit = null;
+      // this.packetToRetransmit = null;
       retransmit.cancel();
       retransmit = null;
       timer.purge();
@@ -511,15 +621,18 @@ public class TCPsender {
     }
   }
 
-  public TimerTask createRetransmitTask() {
+  public TimerTask createRetransmitTask(TCPsegment tcpToRetransmit, DatagramPacket packetToRetransmit) {
     return new TimerTask() {
       @Override
       public void run() {
-        if (received || packetToRetransmit == null || tcpToRetransmit == null) {
+        if (packetToRetransmit == null || tcpToRetransmit == null) {
           System.out.println("timer cancelled once.");
-          // timer.cancel();
           return;
         }
+        // if (received || packetToRetransmit == null || tcpToRetransmit == null) {
+        //   System.out.println("timer cancelled once.");
+        //   return;
+        // }
         try {
           socket.send(packetToRetransmit);
         } catch (IOException e) {
