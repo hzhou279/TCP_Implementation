@@ -62,6 +62,8 @@ public class TCPsegment {
   }
 
   public byte[] serialize() {
+    // if (this.totalLength == 0)
+    //   this.totalLength = TCPsegment.headerLength + this.data.length;
     byte[] serialized = new byte[this.totalLength];
     ByteBuffer bb = ByteBuffer.wrap(serialized);
     bb.putInt(this.sequenceNum);
@@ -70,9 +72,11 @@ public class TCPsegment {
     bb.putInt((((this.length & (1 << 29) - 1)) << 3) + this.flag);
     bb.putShort((short) 0);
     bb.putShort(this.checksum);
-    if (this.data != null)
-      bb.put(data);
-
+    if (this.data != null) {
+      // System.out.println("\n" + this.data.length + "\n");
+      bb.put(this.data);
+    }
+    
     // consult code from assign2 TCP checksum calculation
     if (this.checksum == 0) {
       bb.rewind();
@@ -105,8 +109,12 @@ public class TCPsegment {
     if (this.length != 0) {
       this.data = new byte[this.length];
       bb.get(this.data, 0, this.length);
-    } else
+      this.totalLength = TCPsegment.headerLength + this.length;
+    } else {
       this.data = null;
+      this.totalLength = TCPsegment.headerLength;
+    }
+      
 
     // for debug use
     // System.out.println("deserialize output: ");

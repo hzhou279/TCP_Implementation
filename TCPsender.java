@@ -6,6 +6,8 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -40,17 +42,20 @@ public class TCPsender {
   protected boolean received = false;
 
   protected LinkedBlockingQueue<TCPsegment> slidingWindow;
-  protected int ackedSeqNum;
+  protected Integer ackedSeqNum;
   protected int sequenceNum;
-  protected int curSeqNum;
+  protected Integer curSeqNum;
   protected int curSegIdx;
   protected Integer curAckedSegIdx;
   protected long fileLength;
+
+  protected Map<Integer, Integer> ackSeqNumCntMap;
 
   class Producer implements Runnable {
     protected final LinkedBlockingQueue<TCPsegment> queue;
     protected FileInputStream fis;
     protected File inputFile;
+
     public Producer(LinkedBlockingQueue<TCPsegment> queue, File inputFile) {
       this.queue = queue;
       this.inputFile = inputFile;
@@ -75,30 +80,42 @@ public class TCPsender {
     public void produce() throws IOException, InterruptedException {
       while (true) {
         synchronized (curAckedSegIdx) {
-          if (curSegIdx == curAckedSegIdx && curAckedSegIdx != 0) {
-            System.out.println("reach 79");
-            this.queue.add(new TCPsegment());
-            // return;
-            break;
-          }
+          // if (curSegIdx == curAckedSegIdx && curAckedSegIdx != 0) {
+          // System.out.println("reach 79");
+          // this.queue.add(new TCPsegment());
+          // // return;
+          // break;
+          // }
+
           if (curSegIdx == SWS + curAckedSegIdx) {
             continue;
           }
           int numBytes = MTU;
 
           // fail
-          if (fis.skip(ackedSeqNum) == -1) {
-            this.queue.add(new TCPsegment());
-            return;
+          // synchronized(ackedSeqNum) {
+          //   if (fis.skip(ackedSeqNum) == -1) {
+          //     this.queue.add(new TCPsegment());
+          //     // return;
+          //     break;
+          //   }
+          // }
+          synchronized(curSeqNum) {
+            if (fis.skip(curSeqNum - 1) == -1) {
+              this.queue.add(new TCPsegment());
+              // return;
+              break;
+            }
           }
-
+          
           if (fis.available() < MTU)
             numBytes = fis.available();
 
           // fail
           if (numBytes == 0) {
             this.queue.add(new TCPsegment());
-            return;
+            // return;
+            break;
           }
 
           byte[] dataBuf = new byte[numBytes];
@@ -112,10 +129,13 @@ public class TCPsender {
           } catch (FileNotFoundException e) {
             e.printStackTrace();
           }
-          // System.out.println("curSeqNum: " + curSeqNum + " ackedSeqNum: " + ackedSeqNum);
-          // System.out.println("curSegIdx: " + curSegIdx + " curAckedSegIdx: " + curAckedSegIdx);
+          // System.out.println("curSeqNum: " + curSeqNum + " ackedSeqNum: " +
+          // ackedSeqNum);
+          // System.out.println("curSegIdx: " + curSegIdx + " curAckedSegIdx: " +
+          // curAckedSegIdx);
         }
       }
+
       System.out.println("producer ends");
     }
   }
@@ -130,7 +150,7 @@ public class TCPsender {
     @Override
     public void run() {
       try {
-        synchronized(queue) {
+        synchronized (queue) {
           this.consume();
         }
       } catch (IOException e) {
@@ -144,12 +164,12 @@ public class TCPsender {
         try {
           dataTCP = this.queue.take();
           System.out.println(dataTCP.getFlag());
-          if (dataTCP.getFlag() == (byte)0) {
+          if (dataTCP.getFlag() == (byte) 0) {
             // System.out.println("consumer return");
             // return;
             break;
           }
-            
+
         } catch (InterruptedException e) {
           e.printStackTrace();
         }
@@ -163,8 +183,10 @@ public class TCPsender {
         dataTCP.printInfo(true);
         if (ackedSeqNum >= fileLength)
           return;
-        // System.out.println("curSeqNum: " + curSeqNum + " ackedSeqNum: " + ackedSeqNum);
-        // System.out.println("curSegIdx: " + curSegIdx + " curAckedSegIdx: " + curAckedSegIdx);
+        // System.out.println("curSeqNum: " + curSeqNum + " ackedSeqNum: " +
+        // ackedSeqNum);
+        // System.out.println("curSegIdx: " + curSegIdx + " curAckedSegIdx: " +
+        // curAckedSegIdx);
       }
       System.out.println("consumer ends");
     }
@@ -313,7 +335,7 @@ public class TCPsender {
       // }
       this.sequenceNum = 1;
       this.curSeqNum = 1;
-      this.ackedSeqNum = 1;
+      this.ackedSeqNum = 0;
       this.curSegIdx = 0;
       this.curAckedSegIdx = 0;
       slidingWindow = new LinkedBlockingQueue<TCPsegment>(this.MTU);
@@ -324,6 +346,8 @@ public class TCPsender {
       pThread.start();
       cThread.start();
 
+      this.ackSeqNumCntMap = new HashMap<Integer, Integer>();
+
       while (true) {
         // server receives acknowledgement from client
         byte[] ackBuf = new byte[TCPsegment.headerLength];
@@ -331,9 +355,9 @@ public class TCPsender {
 
         socket.receive(ackPacket);
 
-        synchronized (this.curAckedSegIdx) {
-          this.curAckedSegIdx++;
-        }
+        // synchronized (this.curAckedSegIdx) {
+        //   this.curAckedSegIdx++;
+        // }
 
         TCPsegment ackTCP = new TCPsegment();
         ackTCP = ackTCP.deserialize(ackPacket.getData(), 0, ackBuf.length);
@@ -346,9 +370,45 @@ public class TCPsender {
         // System.out.println("\nCurrent timeout: " + this.TO);
 
         // update ackedSeqNum
-        this.ackedSeqNum = ackTCP.getAcknowledgement();
-        if (this.ackedSeqNum >= this.fileLength)
-          break;
+        int curAckedSeqNum = ackTCP.getAcknowledgement();
+        synchronized (this.curAckedSegIdx) {
+          System.out.println("\ncurAckedSeqNum: " + curAckedSeqNum + " curAckedSegIdx: " +
+          curAckedSegIdx);
+          System.out.println("ackedSeqNum: " + ackedSeqNum + " curAckedSegIdx: " +
+              curAckedSegIdx + "\n");
+          if (curAckedSeqNum == (this.curAckedSegIdx + 1) * this.MTU + 1) {
+            System.out.println("reach 371");
+            this.curAckedSegIdx++;
+            synchronized (this.ackedSeqNum) {
+              if (this.ackedSeqNum == 0)
+                this.ackedSeqNum++;
+              this.ackedSeqNum = this.ackedSeqNum + this.MTU;
+            }
+          } else if (curAckedSeqNum == this.fileLength + 1 && curAckedSegIdx == (int) (this.fileLength / this.MTU)) {
+            this.curAckedSegIdx++;
+            this.ackedSeqNum = (int) this.fileLength + 1;
+            break;
+          }
+        }
+        if (this.ackSeqNumCntMap.containsKey(curAckedSeqNum)) {
+          // increment current ackedSeqNum count
+          int curAckedSeqNumCnt = this.ackSeqNumCntMap.get(curAckedSeqNum);
+          // indicate that at least one segment lost
+          if (curAckedSeqNumCnt > 2) {
+            // retransmit
+
+
+            
+          } else {
+            this.ackSeqNumCntMap.put(curAckedSeqNum, curAckedSeqNumCnt + 1);
+          }
+        } else {
+          this.ackSeqNumCntMap.put(curAckedSeqNum, 1);
+        }
+
+        // this.ackedSeqNum = ackTCP.getAcknowledgement();
+        // if (this.ackedSeqNum >= this.fileLength)
+        // break;
         // // check acknowledgement number
         // if (ackTCP.getAcknowledgement() != sequenceNum + numBytes) {
         // System.out.println("Acknowledgement number mismatch.");
@@ -359,19 +419,14 @@ public class TCPsender {
         // sequenceNum += numBytes;
       }
 
+      System.out.println("reach 418");
       // Main thread waits for producer and consumer to teriminate
-      // try {
-      //   pThread.join();
-      //   cThread.join();
-      // } catch (InterruptedException e) {
-      //   e.printStackTrace();
-      // }
-      
-      System.out.println("reach 370");
-
-      // while (pThread.isAlive() || cThread.isAlive()) {
-      //     System.out.println("AAA"+this.slidingWindow);
-      // }
+      try {
+        pThread.join();
+        cThread.join();
+      } catch (InterruptedException e) {
+        e.printStackTrace();
+      }
 
       System.out.println("reach 333");
 
