@@ -61,11 +61,20 @@ public class TCPreceiver {
         dataTCP.setTime(System.nanoTime() - startTime);
         dataTCP.printInfo(false);
 
+
+        // check if client receives first FIN from server
+        if (dataTCP.getFlag() == TCPsegment.FIN + TCPsegment.ACK) {
+          this.queue.add(dataTCP);
+          break;
+        }
+
         // client drops dataTCP out of current sliding window
-        if (dataTCP.getSequenceNum() > ackedSeqNum + (sws+1) * MTU || dataTCP.getSequenceNum() < ackedSeqNum) {
-          System.out.println("seqNum: " + dataTCP.getSequenceNum() + " ackedSeqNum: " + ackedSeqNum);
-          System.out.println("Sliding window from: " + ackedSeqNum + " to: " + (ackedSeqNum + (sws+1) * MTU));
-          continue;
+        synchronized (ackedSeqNum) {
+          if (dataTCP.getSequenceNum() > ackedSeqNum + (sws + 1) * MTU || dataTCP.getSequenceNum() < ackedSeqNum) {
+            System.out.println("seqNum: " + dataTCP.getSequenceNum() + " ackedSeqNum: " + ackedSeqNum);
+            System.out.println("Sliding window from: " + ackedSeqNum + " to: " + (ackedSeqNum + (sws + 1) * MTU));
+            continue;
+          }
         }
 
         // check if data packet is valid
@@ -73,19 +82,14 @@ public class TCPreceiver {
           System.out.println("drop once");
           continue;
         }
-          
+
         if (dataTCP.getChecksum() != dataTCP.deserialize(dataTCP.serialize(), 0, dataTCP.length).getChecksum()) {
           // drop packet
           System.out.println("drop once");
           continue;
         }
-          
-        this.queue.add(dataTCP);
 
-        // check if client receives first FIN from server
-        if (dataTCP.getFlag() == TCPsegment.FIN + TCPsegment.ACK) {
-          break;
-        }
+        this.queue.add(dataTCP);
       }
     }
   }
@@ -110,7 +114,7 @@ public class TCPreceiver {
     }
 
     public void consume() throws IOException {
-      ackedSeqNum = 1;
+      // ackedSeqNum = 1;
       while (true) {
         TCPsegment dataTCP = null;
         try {
@@ -121,38 +125,40 @@ public class TCPreceiver {
         if (dataTCP == null)
           System.out.println("Consumer get no TCP segments.");
 
-        if (dataTCP.getSequenceNum() == ackedSeqNum) {
-          if (dataTCP.getData() == null)
-            System.out.println("dataTCP.getData() is null");
-          byte[] dataBuf = dataTCP.getData();
-          fos.write(dataBuf);
-          // update acknowledgement number
-          ackedSeqNum += dataTCP.getLength();
-        }
+        synchronized (ackedSeqNum) {
+          if (dataTCP.getSequenceNum() == ackedSeqNum) {
+            if (dataTCP.getData() == null)
+              System.out.println("dataTCP.getData() is null");
+            byte[] dataBuf = dataTCP.getData();
+            fos.write(dataBuf);
+            // update acknowledgement number
+            ackedSeqNum += dataTCP.getLength();
+          }
 
-        // check if client receives first FIN from server
-        if (dataTCP.getFlag() == TCPsegment.FIN + TCPsegment.ACK) {
-          // clients sends out second FIN + ACK to server
-          TCPsegment secondFINACKTCP = new TCPsegment((byte) (TCPsegment.FIN + TCPsegment.ACK), 1,
-              dataTCP.getSequenceNum() + 1, dataTCP.getTimestamp());
-          byte[] secondFINACKBuf = secondFINACKTCP.serialize();
-          DatagramPacket secondFINACKPacket = new DatagramPacket(secondFINACKBuf, secondFINACKBuf.length, remoteIP,
-              remotePort);
-          socket.send(secondFINACKPacket);
-          // output second FIN + ACK TCP segment sent
-          secondFINACKTCP.setTime(System.nanoTime() - startTime);
-          secondFINACKTCP.printInfo(true);
-          break;
-        }
+          // check if client receives first FIN from server
+          if (dataTCP.getFlag() == TCPsegment.FIN + TCPsegment.ACK) {
+            // clients sends out second FIN + ACK to server
+            TCPsegment secondFINACKTCP = new TCPsegment((byte) (TCPsegment.FIN + TCPsegment.ACK), 1,
+                dataTCP.getSequenceNum() + 1, dataTCP.getTimestamp());
+            byte[] secondFINACKBuf = secondFINACKTCP.serialize();
+            DatagramPacket secondFINACKPacket = new DatagramPacket(secondFINACKBuf, secondFINACKBuf.length, remoteIP,
+                remotePort);
+            socket.send(secondFINACKPacket);
+            // output second FIN + ACK TCP segment sent
+            secondFINACKTCP.setTime(System.nanoTime() - startTime);
+            secondFINACKTCP.printInfo(true);
+            break;
+          }
 
-        // clients sends out acknowledgement to server
-        TCPsegment ackTCP = new TCPsegment(TCPsegment.ACK, 1, ackedSeqNum, dataTCP.getTimestamp());
-        byte[] ackBuf = ackTCP.serialize();
-        DatagramPacket ackPacket = new DatagramPacket(ackBuf, ackBuf.length, remoteIP, remotePort);
-        socket.send(ackPacket);
-        // output acknowledgement TCP segment sent
-        ackTCP.setTime(System.nanoTime() - startTime);
-        ackTCP.printInfo(true);
+          // clients sends out acknowledgement to server
+          TCPsegment ackTCP = new TCPsegment(TCPsegment.ACK, 1, ackedSeqNum, dataTCP.getTimestamp());
+          byte[] ackBuf = ackTCP.serialize();
+          DatagramPacket ackPacket = new DatagramPacket(ackBuf, ackBuf.length, remoteIP, remotePort);
+          socket.send(ackPacket);
+          // output acknowledgement TCP segment sent
+          ackTCP.setTime(System.nanoTime() - startTime);
+          ackTCP.printInfo(true);
+        }
       }
     }
   }
@@ -227,52 +233,57 @@ public class TCPreceiver {
       // // begin data transmission
       // int acknowledgementNum = 1;
       // while (true) {
-      //   // client receives data from server
-      //   byte[] tcpBuf = new byte[this.MTU + TCPsegment.headerLength];
-      //   DatagramPacket dataPacket = new DatagramPacket(tcpBuf, tcpBuf.length);
-      //   // socket.setSoTimeout(5 * 1000);
-      //   socket.receive(dataPacket);
-      //   TCPsegment dataTCP = new TCPsegment();
-      //   dataTCP = dataTCP.deserialize(dataPacket.getData(), 0, tcpBuf.length); // dataBuf.length mismatch
-      //   // output data tcp received
-      //   dataTCP.setTime(System.nanoTime() - this.startTime);
-      //   dataTCP.printInfo(false);
+      // // client receives data from server
+      // byte[] tcpBuf = new byte[this.MTU + TCPsegment.headerLength];
+      // DatagramPacket dataPacket = new DatagramPacket(tcpBuf, tcpBuf.length);
+      // // socket.setSoTimeout(5 * 1000);
+      // socket.receive(dataPacket);
+      // TCPsegment dataTCP = new TCPsegment();
+      // dataTCP = dataTCP.deserialize(dataPacket.getData(), 0, tcpBuf.length); //
+      // dataBuf.length mismatch
+      // // output data tcp received
+      // dataTCP.setTime(System.nanoTime() - this.startTime);
+      // dataTCP.printInfo(false);
 
-      //   // check if client receives first FIN from server
-      //   if (dataTCP.getFlag() == TCPsegment.FIN + TCPsegment.ACK) {
-      //     // clients sends out second FIN + ACK to server
-      //     TCPsegment secondFINACKTCP = new TCPsegment((byte) (TCPsegment.FIN + TCPsegment.ACK), 1,
-      //         dataTCP.getSequenceNum() + 1, dataTCP.getTimestamp());
-      //     byte[] secondFINACKBuf = secondFINACKTCP.serialize();
-      //     DatagramPacket secondFINACKPacket = new DatagramPacket(secondFINACKBuf, secondFINACKBuf.length, remoteIP,
-      //         remotePort);
-      //     socket.send(secondFINACKPacket);
-      //     // output second FIN + ACK TCP segment sent
-      //     secondFINACKTCP.setTime(System.nanoTime() - this.startTime);
-      //     secondFINACKTCP.printInfo(true);
-      //     break;
-      //   }
+      // // check if client receives first FIN from server
+      // if (dataTCP.getFlag() == TCPsegment.FIN + TCPsegment.ACK) {
+      // // clients sends out second FIN + ACK to server
+      // TCPsegment secondFINACKTCP = new TCPsegment((byte) (TCPsegment.FIN +
+      // TCPsegment.ACK), 1,
+      // dataTCP.getSequenceNum() + 1, dataTCP.getTimestamp());
+      // byte[] secondFINACKBuf = secondFINACKTCP.serialize();
+      // DatagramPacket secondFINACKPacket = new DatagramPacket(secondFINACKBuf,
+      // secondFINACKBuf.length, remoteIP,
+      // remotePort);
+      // socket.send(secondFINACKPacket);
+      // // output second FIN + ACK TCP segment sent
+      // secondFINACKTCP.setTime(System.nanoTime() - this.startTime);
+      // secondFINACKTCP.printInfo(true);
+      // break;
+      // }
 
-      //   // write data received into output file
-      //   // drop duplicate data package
-      //   if (dataTCP.getSequenceNum() >= acknowledgementNum) {
-      //     if (dataTCP.getData() == null)
-      //       System.out.println("dataTCP.getData() is null");
-      //     byte[] dataBuf = dataTCP.getData();
-      //     fos.write(dataBuf);
+      // // write data received into output file
+      // // drop duplicate data package
+      // if (dataTCP.getSequenceNum() >= acknowledgementNum) {
+      // if (dataTCP.getData() == null)
+      // System.out.println("dataTCP.getData() is null");
+      // byte[] dataBuf = dataTCP.getData();
+      // fos.write(dataBuf);
 
-      //     // update acknowledgement number
-      //     acknowledgementNum += dataTCP.getLength();
-      //   }
+      // // update acknowledgement number
+      // acknowledgementNum += dataTCP.getLength();
+      // }
 
-      //   // clients sends out acknowledgement to server
-      //   TCPsegment ackTCP = new TCPsegment(TCPsegment.ACK, 1, acknowledgementNum, dataTCP.getTimestamp());
-      //   byte[] ackBuf = ackTCP.serialize();
-      //   DatagramPacket ackPacket = new DatagramPacket(ackBuf, ackBuf.length, remoteIP, remotePort);
-      //   socket.send(ackPacket);
-      //   // output acknowledgement TCP segment sent
-      //   ackTCP.setTime(System.nanoTime() - this.startTime);
-      //   ackTCP.printInfo(true);
+      // // clients sends out acknowledgement to server
+      // TCPsegment ackTCP = new TCPsegment(TCPsegment.ACK, 1, acknowledgementNum,
+      // dataTCP.getTimestamp());
+      // byte[] ackBuf = ackTCP.serialize();
+      // DatagramPacket ackPacket = new DatagramPacket(ackBuf, ackBuf.length,
+      // remoteIP, remotePort);
+      // socket.send(ackPacket);
+      // // output acknowledgement TCP segment sent
+      // ackTCP.setTime(System.nanoTime() - this.startTime);
+      // ackTCP.printInfo(true);
       // }
       slidingWindow = new LinkedBlockingQueue<TCPsegment>(this.MTU);
       Producer p = new Producer(slidingWindow);
