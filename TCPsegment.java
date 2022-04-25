@@ -153,7 +153,7 @@ public class TCPsegment {
       output += "snd ";
     else
       output += "rcv ";
-    output += this.time + " ";
+    output += String.format("%.2f", this.time) + " ";
     for (int i = 0; i < 4; i++)
       output += flagList[i] + " ";
     output += this.sequenceNum + " ";
@@ -234,7 +234,7 @@ public class TCPsegment {
     return this.time;
   }
 
-  public void setTime(double time) {
-    this.time = time;
+  public void setTime(long time) {
+    this.time = time / Math.pow(10, 9);
   }
 }
