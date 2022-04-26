@@ -39,6 +39,7 @@ public class TCPend {
       mode = 1;
 
       TCPsender sender = new TCPsender(port, remoteIP, remotePort, fileName, MTU, sws);
+      sender.printStats();
       // sender.printInfo();
     }
 

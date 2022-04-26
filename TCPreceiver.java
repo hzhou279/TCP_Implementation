@@ -115,7 +115,9 @@ public class TCPreceiver {
           continue;
         }
 
-        if (dataTCP.getChecksum() != dataTCP.deserialize(dataTCP.serialize(), 0, dataTCP.length).getChecksum()) {
+        short oldChecksum = dataTCP.getChecksum();
+        dataTCP.setChecksum((short)0);
+        if (oldChecksum != dataTCP.deserialize(dataTCP.serialize(), 0, dataTCP.length).getChecksum()) {
           // drop packet
           System.out.println("drop once");
           continue;
@@ -159,7 +161,7 @@ public class TCPreceiver {
 
         long timestamp = dataTCP.getTimestamp();
         synchronized (ackedSeqNum) {
-          if (dataTCP.getSequenceNum() == ackedSeqNum) {
+          if (dataTCP.getSequenceNum() == ackedSeqNum && dataTCP.getLength() != 0) {
             if (dataTCP.getData() == null)
               System.out.println("dataTCP.getData() is null");
             byte[] dataBuf = dataTCP.getData();
@@ -380,6 +382,15 @@ public class TCPreceiver {
         e.printStackTrace();
       }
 
+      // clients sets up second FIN + ACK retransmit timer to server
+      TCPsegment secondFINACKTCP = new TCPsegment((byte) (TCPsegment.FIN + TCPsegment.ACK), 1,
+      ackedSeqNum + 1, System.nanoTime());
+      byte[] secondFINACKBuf = secondFINACKTCP.serialize();
+      DatagramPacket secondFINACKPacket = new DatagramPacket(secondFINACKBuf, secondFINACKBuf.length, remoteIP,
+          remotePort);
+      retransmit = createRetransmitTask(secondFINACKTCP, secondFINACKPacket);
+      timer.schedule(retransmit, 1000, 1000);
+
       // client receives last ACK from server
       while (true) {
         byte[] lastACKBuf = new byte[TCPsegment.headerLength + this.MTU];
@@ -394,22 +405,25 @@ public class TCPreceiver {
         // System.out.println("reach 394");
         if (lastACKTCP.getFlag() == TCPsegment.ACK && lastACKTCP.getLength() == 0) {
           // System.out.println("reach asdasdasd");
+          retransmit.cancel();
+          retransmit = null;
+          timer.purge();
           break;
         }
         // client receives first FIN + ACK as server does not receive client's ACK
         // else if (lastACKTCP.getFlag() == (byte)TCPsegment.ACK + TCPsegment.FIN) {
-        else {
-          // clients sends out second FIN + ACK to server
-          TCPsegment secondFINACKTCP = new TCPsegment((byte) (TCPsegment.FIN + TCPsegment.ACK), 1,
-          lastACKTCP.getSequenceNum() + 1, lastACKTCP.getTimestamp());
-          byte[] secondFINACKBuf = secondFINACKTCP.serialize();
-          DatagramPacket secondFINACKPacket = new DatagramPacket(secondFINACKBuf, secondFINACKBuf.length, remoteIP,
-              remotePort);
-          socket.send(secondFINACKPacket);
-          // output second FIN + ACK TCP segment sent
-          secondFINACKTCP.setTime(System.nanoTime() - startTime);
-          secondFINACKTCP.printInfo(true);
-        }
+        // else {
+        //   // clients sends out second FIN + ACK to server
+        //   TCPsegment secondFINACKTCP = new TCPsegment((byte) (TCPsegment.FIN + TCPsegment.ACK), 1,
+        //   lastACKTCP.getSequenceNum() + 1, lastACKTCP.getTimestamp());
+        //   byte[] secondFINACKBuf = secondFINACKTCP.serialize();
+        //   DatagramPacket secondFINACKPacket = new DatagramPacket(secondFINACKBuf, secondFINACKBuf.length, remoteIP,
+        //       remotePort);
+        //   socket.send(secondFINACKPacket);
+        //   // output second FIN + ACK TCP segment sent
+        //   secondFINACKTCP.setTime(System.nanoTime() - startTime);
+        //   secondFINACKTCP.printInfo(true);
+        // }
         // System.out.println("reach 396");
       }
 
