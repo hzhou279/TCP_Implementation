@@ -78,7 +78,7 @@ public class TCPsegment {
     }
     
     // consult code from assign2 TCP checksum calculation
-    if (this.checksum == 0) {
+    if (this.checksum == (short)0) {
       bb.rewind();
       int accumulation = 0;
       for (int i = 0; i < headerLength / 2; ++i) {

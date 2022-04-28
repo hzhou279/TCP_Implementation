@@ -1,0 +1,11 @@
+Names: Gefei Shen, Hongru Zhou
+CS usernames: gefei, hongruz
+
+Our implementation includes four files: TCPend.java, TCPsegment.java, TCPreceiver.java, TCPsender.java
+
+TCPend is the main program which addresses command line arguments.
+TCPsender runs on the server side.
+TCPreceiver runs on the client side.
+TCPsegment is the data segment that encapsulated in the java DatagramPacket. It is used for data exchange 
+between server and client.
+

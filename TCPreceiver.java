@@ -5,6 +5,7 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Timer;
@@ -18,7 +19,7 @@ public class TCPreceiver {
   protected int remotePort;
   protected String fileName;
   protected int MTU; // maximum transmission unit in bytes
-  protected int sws; // sliding window size
+  protected int SWS; // sliding window size
   protected int mode; // 1 for sender and 0 for receiver
 
   protected long startTime = System.nanoTime();
@@ -42,6 +43,12 @@ public class TCPreceiver {
   protected long TO = 3000;
 
   protected int unlockCnt;
+
+  protected Integer dataReceivedCnt;
+  protected Integer packetsReceivedCnt;
+  protected Integer outOfSeqPacketsDiscardedCnt;
+  protected Integer inChecksumPackectsDiscardedCnt;
+  protected Integer dupAckCnt;
 
   class segmentComparator implements Comparator<TCPsegment> {
     @Override
@@ -78,7 +85,15 @@ public class TCPreceiver {
         // client receives data package from server
         byte[] tcpBuf = new byte[MTU + TCPsegment.headerLength];
         DatagramPacket dataPacket = new DatagramPacket(tcpBuf, tcpBuf.length);
+        try {
+        socket.setSoTimeout(10000);
         socket.receive(dataPacket);
+        } catch (SocketTimeoutException e) {
+          System.out.println("No package received from sender for 10 secs.");
+          // e.printStackTrace();
+          printStats();
+          System.exit(0);
+        }
         TCPsegment dataTCP = new TCPsegment();
         dataTCP = dataTCP.deserialize(dataPacket.getData(), 0, tcpBuf.length); // dataBuf.length mismatch
         // output data tcp received
@@ -93,11 +108,12 @@ public class TCPreceiver {
 
         // client drops dataTCP out of current sliding window
         synchronized (ackedSeqNum) {
-          if (dataTCP.getSequenceNum() < ackedSeqNum) {
+          if (dataTCP.getSequenceNum() < ackedSeqNum || dataTCP.getSequenceNum() > ackedSeqNum + SWS * MTU) {
             // System.out.println("seqNum: " + dataTCP.getSequenceNum() + " ackedSeqNum: " +
             // ackedSeqNum);
             // System.out.println("Sliding window from: " + ackedSeqNum + " to: " +
-            // (ackedSeqNum + (sws + 1) * MTU));
+            // (ackedSeqNum + (SWS + 1) * MTU));
+            outOfSeqPacketsDiscardedCnt++;
             unlockCnt++;
             if (unlockCnt <= 3)
               continue;
@@ -117,12 +133,21 @@ public class TCPreceiver {
 
         short oldChecksum = dataTCP.getChecksum();
         dataTCP.setChecksum((short)0);
-        if (oldChecksum != dataTCP.deserialize(dataTCP.serialize(), 0, dataTCP.length).getChecksum()) {
-          // drop packet
-          System.out.println("drop once");
+        dataTCP.serialize();
+        if (oldChecksum != dataTCP.getChecksum()) {
+          inChecksumPackectsDiscardedCnt++;
+          System.out.println("checksum failed");
           continue;
         }
+          
+        // if (oldChecksum != dataTCP.deserialize(dataTCP.serialize(), 0, dataTCP.length).getChecksum()) {
+        //   // drop packet
+        //   System.out.println("drop once");
+        //   continue;
+        // }
 
+        packetsReceivedCnt++;
+        dataReceivedCnt += dataTCP.getLength();
         this.queue.add(dataTCP);
       }
     }
@@ -178,7 +203,7 @@ public class TCPreceiver {
                 timestamp = rcvBuf.get(i).getTimestamp();
                 rcvBuf.remove(i);
                 i--;
-              } else if (dataTCP.getSequenceNum() > ackedSeqNum + sws * MTU || dataTCP.getSequenceNum() < ackedSeqNum) {
+              } else if (dataTCP.getSequenceNum() > ackedSeqNum + SWS * MTU || dataTCP.getSequenceNum() < ackedSeqNum) {
                 rcvBuf.remove(i);
                 i--;
               }
@@ -215,12 +240,17 @@ public class TCPreceiver {
     }
   }
 
-  public TCPreceiver(int port, String fileName, int MTU, int sws) {
+  public TCPreceiver(int port, String fileName, int MTU, int SWS) {
     this.port = port;
     this.fileName = fileName;
     this.MTU = MTU - 20 - 8 - 24;
-    this.sws = sws;
-    slidingWindow = new LinkedBlockingQueue<TCPsegment>(this.MTU);
+    this.SWS = SWS;
+    slidingWindow = new LinkedBlockingQueue<TCPsegment>(this.SWS);
+
+    this.dataReceivedCnt = 0;
+    this.packetsReceivedCnt = 0;
+    this.outOfSeqPacketsDiscardedCnt = 0;
+    this.inChecksumPackectsDiscardedCnt = 0;
 
     timer = new Timer();
     try {
@@ -230,12 +260,32 @@ public class TCPreceiver {
 
       // client receives initial SYN from server
       while (true) {
-        byte[] buf = new byte[TCPsegment.headerLength];
+        byte[] buf = new byte[TCPsegment.headerLength + this.MTU];
         DatagramPacket initialPacket = new DatagramPacket(buf, TCPsegment.headerLength);
         // System.out.println("Wait fot server SYN....");
         socket.receive(initialPacket);
         TCPsegment initialTCP = new TCPsegment();
         initialTCP = initialTCP.deserialize(initialPacket.getData(), 0, buf.length);
+        if (initialTCP.getFlag() == TCPsegment.ACK && initialTCP.getLength() != 0 && initialTCP.getData() != null) {
+          this.slidingWindow.add(initialTCP);
+          this.remoteIP = initialPacket.getAddress();
+          this.remotePort = initialPacket.getPort();
+          break;
+        }
+
+        short oldChecksum = initialTCP.getChecksum();
+        initialTCP.setChecksum((short)0);
+        initialTCP.serialize();
+        if (oldChecksum != initialTCP.getChecksum()) {
+          System.out.println("SYN from server checksum failed.");
+          inChecksumPackectsDiscardedCnt++;
+          continue;
+        }
+
+        // check initial sequence number
+        if (initialTCP.getSequenceNum() != 0 || initialTCP.getAcknowledgement() != 0)
+          continue;
+
         // output first SYN received
         initialTCP.setTime(System.nanoTime() - this.startTime);
         initialTCP.printInfo(false);
@@ -261,7 +311,19 @@ public class TCPreceiver {
 
           TCPsegment finalTCP = new TCPsegment();
           finalTCP = finalTCP.deserialize(finalPacket.getData(), 0, finalBuf.length);
+
+          oldChecksum = finalTCP.getChecksum();
+          finalTCP.setChecksum((short)0);
+          finalTCP.serialize();
+          if (oldChecksum != finalTCP.getChecksum()) {
+            System.out.println("final ACK from server checksum failed.");
+            inChecksumPackectsDiscardedCnt++;
+            continue;
+          }
+
           // output final ACK received
+          if (finalTCP.getSequenceNum() != 1 || finalTCP.getAcknowledgement() != 1)
+            continue;
           if (finalTCP.getFlag() == TCPsegment.SYN)
             continue;
           if (finalTCP.getData() == null) {
@@ -451,7 +513,17 @@ public class TCPreceiver {
 
   public void printInfo() {
     System.out
-        .println("TCP client created with port: " + port + " fileName: " + fileName + " MTU: " + MTU + " sws: " + sws);
+        .println("TCP client created with port: " + port + " fileName: " + fileName + " MTU: " + MTU + " SWS: " + SWS);
+  }
+
+  public void printStats() {
+    String out = "--------------------------\n";
+    out += "- Amount of Data received: " + this.dataReceivedCnt;
+    out += "\n- Number of packets received: " + this.packetsReceivedCnt;
+    out += "\n- Number of out-of-sequence packets discarded: " + this.outOfSeqPacketsDiscardedCnt;
+    out += "\n- Number of packets discarded due to incorrect checksum: " + this.inChecksumPackectsDiscardedCnt;
+    out += "\n--------------------------";
+    System.out.println(out);
   }
 
   public TimerTask createRetransmitTask(TCPsegment tcpToRetransmit, DatagramPacket packetToRetransmit) {

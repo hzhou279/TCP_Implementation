@@ -17,7 +17,6 @@ public class TCPend {
     String fileName;
     int MTU; // maximum transmission unit in bytes
     int sws; // sliding window size
-    int mode; // 1 for sender and 0 for receiver
 
     if (args.length <= 2)
       System.exit(1);
@@ -36,7 +35,6 @@ public class TCPend {
       fileName = args[7];
       MTU = Integer.parseInt(args[9]);
       sws = Integer.parseInt(args[11]);
-      mode = 1;
 
       TCPsender sender = new TCPsender(port, remoteIP, remotePort, fileName, MTU, sws);
       sender.printStats();
@@ -49,9 +47,9 @@ public class TCPend {
       MTU = Integer.parseInt(args[3]);
       sws = Integer.parseInt(args[5]);
       fileName = args[7];
-      mode = 0;
 
       TCPreceiver receiver = new TCPreceiver(port, fileName, MTU, sws);
+      receiver.printStats();
       // receiver.printInfo();
     } 
     

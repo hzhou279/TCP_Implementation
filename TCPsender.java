@@ -66,6 +66,9 @@ public class TCPsender {
   protected Integer retransmitCnt;
   protected Integer dupAckCnt;
 
+  protected Thread pThread;
+  protected Thread cThread;
+
   class retransmitThread {
     protected TimerTask task;
     protected Integer sequenceNum;
@@ -298,37 +301,48 @@ public class TCPsender {
       retransmit = this.createRetransmitTask(initialTCP, initialPacket);
       timer.schedule(retransmit, this.TO, this.TO);
 
-      // server receives SYN + ACK from client
-      byte[] secondBuf = new byte[TCPsegment.headerLength];
-      DatagramPacket secondPacket = new DatagramPacket(secondBuf, TCPsegment.headerLength);
-      // System.out.println("Wait fot client SYN + ACK....");
-      socket.receive(secondPacket);
+      int acknowledgement = 0;
+      while (true) {
+        // server receives SYN + ACK from client
+        byte[] secondBuf = new byte[TCPsegment.headerLength];
+        DatagramPacket secondPacket = new DatagramPacket(secondBuf, TCPsegment.headerLength);
+        // System.out.println("Wait fot client SYN + ACK....");
+        socket.receive(secondPacket);
 
-      // release timer
-      // this.received = true;
-      // this.tcpToRetransmit = null;
-      // this.packetToRetransmit = null;
-      retransmit.cancel();
-      retransmit = null;
-      timer.purge();
+        // release timer
+        // this.received = true;
+        // this.tcpToRetransmit = null;
+        // this.packetToRetransmit = null;
 
-      TCPsegment secondTCP = new TCPsegment();
-      secondTCP = secondTCP.deserialize(secondPacket.getData(), 0, secondBuf.length);
-      // output second SYN + ACK received
-      secondTCP.setTime(System.nanoTime() - this.startTime);
-      secondTCP.printInfo(false);
-      // initial sequence number of server set to 0
-      if (secondTCP.getAcknowledgement() != 1) {
-        System.out.println("SYN + ACK from client confirmation fails.");
-        System.exit(1);
+        TCPsegment secondTCP = new TCPsegment();
+        secondTCP = secondTCP.deserialize(secondPacket.getData(), 0, secondBuf.length);
+        short oldChecksum = secondTCP.getChecksum();
+        secondTCP.setChecksum((short) 0);
+        secondTCP.serialize();
+        if (oldChecksum != secondTCP.getChecksum()) {
+          System.out.println("SYN + ACK from client checksum failed");
+          inChecksumPackectsDiscardedCnt++;
+          continue;
+        }
+
+        retransmit.cancel();
+        retransmit = null;
+        timer.purge();
+        // output second SYN + ACK received
+        secondTCP.setTime(System.nanoTime() - this.startTime);
+        secondTCP.printInfo(false);
+        // initial sequence number of server set to 0
+        if (secondTCP.getAcknowledgement() != 1) {
+          System.out.println("SYN + ACK from client acknowledgement mismatch.");
+          System.exit(1);
+        }
+        // update timeout
+        computeRTT(secondTCP.getSequenceNum(), System.nanoTime(), secondTCP.getTimestamp());
+        acknowledgement = secondTCP.getSequenceNum() + 1;
+        break;
       }
 
-      // update timeout
-      computeRTT(secondTCP.getSequenceNum(), System.nanoTime(), secondTCP.getTimestamp());
-      // System.out.println("\nCurrent timeout: " + this.TO);
-
       // server sends out final ACK to establish connection
-      int acknowledgement = secondTCP.getSequenceNum() + 1;
       TCPsegment finalTCP = new TCPsegment(TCPsegment.ACK, 1, acknowledgement, System.nanoTime());
       byte[] finalBuf = finalTCP.serialize();
       DatagramPacket finalPacket = new DatagramPacket(finalBuf, finalBuf.length, remoteIP, remotePort);
@@ -410,11 +424,11 @@ public class TCPsender {
       this.ackedSeqNum = 0;
       this.curSegIdx = 0;
       this.curAckedSegIdx = 0;
-      slidingWindow = new LinkedBlockingQueue<TCPsegment>(this.MTU);
+      // slidingWindow = new LinkedBlockingQueue<TCPsegment>(this.MTU);
       Producer p = new Producer(slidingWindow, inFile);
       Consumer c = new Consumer(slidingWindow);
-      Thread pThread = new Thread(p);
-      Thread cThread = new Thread(c);
+      pThread = new Thread(p);
+      cThread = new Thread(c);
       pThread.start();
       cThread.start();
 
@@ -433,6 +447,14 @@ public class TCPsender {
 
         TCPsegment ackTCP = new TCPsegment();
         ackTCP = ackTCP.deserialize(ackPacket.getData(), 0, ackBuf.length);
+        short oldChecksum = ackTCP.getChecksum();
+        ackTCP.setChecksum((short)0);
+        ackTCP.serialize();
+        if (oldChecksum != ackTCP.getChecksum()) {
+          System.out.println("An acknowledgement package from client checksum failed");
+          inChecksumPackectsDiscardedCnt++;
+          continue;
+        }
         // output acknowledgement tcp received
         ackTCP.setTime(System.nanoTime() - this.startTime);
         ackTCP.printInfo(false);
@@ -577,6 +599,7 @@ public class TCPsender {
 
           } else {
             this.ackSeqNumCntMap.put(curAckedSeqNum, curAckedSeqNumCnt + 1);
+            dupAckCnt++;
           }
         } else {
           this.ackSeqNumCntMap.put(curAckedSeqNum, 1);
@@ -640,6 +663,16 @@ public class TCPsender {
 
         TCPsegment secondFINACKTCP = new TCPsegment();
         secondFINACKTCP = secondFINACKTCP.deserialize(secondFINACKPacket.getData(), 0, secondFINACKBuf.length);
+
+        short oldChecksum = secondFINACKTCP.getChecksum();
+        secondFINACKTCP.setChecksum((short)0);
+        secondFINACKTCP.serialize();
+        if (oldChecksum != secondFINACKTCP.getChecksum()) {
+          System.out.println("FIN + ACK from client checksum failed.");
+          inChecksumPackectsDiscardedCnt++;
+          continue;
+        }
+
         // output second FIN + ACK received
         secondFINACKTCP.setTime(System.nanoTime() - this.startTime);
         secondFINACKTCP.printInfo(false);
@@ -706,6 +739,8 @@ public class TCPsender {
     out += "- Amount of Data transferred: " + this.dataTransferredCnt;
     out += "\n- Number of packets sent: " + this.packetsSentCnt;
     out += "\n- Number of retransmissions: " + this.retransmitCnt;
+    out += "\n- Number of packets discarded due to incorrect checksum: " + this.inChecksumPackectsDiscardedCnt;
+    out += "\n- Number of duplicate acknowledgements: " + this.dupAckCnt;
     out += "\n--------------------------";
     System.out.println(out);
   }
@@ -760,6 +795,11 @@ public class TCPsender {
                 + " reaches Maximum Retransmission Count: 16");
             retransmitThreads.removeIf(cur -> (cur.getSequenceNum() == tcpToRetransmit.getSequenceNum()));
             this.cancel();
+            timer.purge();
+            // timer.cancel();
+            printStats();
+            System.exit(0);
+            // printStats();
           } else
             retransmitCntMap.put(tcpToRetransmit.getSequenceNum(), oldCnt + 1);
         } catch (IOException e) {
